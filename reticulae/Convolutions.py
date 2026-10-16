@@ -3,7 +3,8 @@
 The computation of a layer, given its rulebook grouped by kernel offset into padded [R, M] index tables (Rulebook.py),
 is ONE gather of the input rows, ONE batched matmul over the R offsets (torch.bmm, each offset with its weight matrix)
 and ONE scatter-add into the output rows (index_add_), whatever the kernel size; when the gathered rows would exceed
-TEMP_BYTES the offsets are processed in a few chunks. Features are site-major, [sites, batch, channels]:
+TEMP_BYTES the offsets are processed in a few chunks. With DETERMINISTIC (default) the scatter-add is done one offset
+(table row) at a time, so that the result is bitwise reproducible on the GPU (addRows). Features are site-major, [sites, batch, channels]:
 gathering/scattering a site moves a contiguous row. The backward pass (SparseConvFn) recomputes the gather instead of
 storing the gathered input, and splits the long reduction of the weight gradient into chunks so that the GPU is not
 left with only R x c_in x c_out outputs to compute.
@@ -24,6 +25,31 @@ import torch.nn as nn
 from reticulae import Rulebook as RB
 
 TEMP_BYTES = 2 ** 28   # budget of the temporary gathered rows of a layer: the kernel offsets are processed in chunks
+DETERMINISTIC = True   # bitwise-reproducible results on the GPU (README, "Reproducibility"); False: one scatter per chunk
+
+def addRows(out, tab, v):
+	"""out[tab[r, j]] += v[r * M + j] for the rows r of an index table tab [r, M] (v [r * M, ...]). A row of a rulebook
+	table holds one kernel offset, whose outputs are distinct (apart from the discarded padding row): scattering one row
+	at a time never makes two CUDA atomic additions hit the same site, so the result does not depend on their order.
+	DETERMINISTIC = False scatters all the rows at once (one kernel launch, nondeterministic sums on the GPU)."""
+	if DETERMINISTIC and out.is_cuda:
+		M = tab.shape[1]
+		for j in range(len(tab)):
+			out.index_add_(0, tab[j], v[j * M:(j + 1) * M])
+	else:
+		out.index_add_(0, tab.reshape(-1), v)
+
+def scatterAdd(out, idx, v):
+	"""out.index_add_(0, idx, v) for arbitrary repeated indices; with DETERMINISTIC on the GPU, index_put_(accumulate)
+	(sorts the indices: deterministic, slower; used by pooling and the Hilbert input, not by the convolutions)"""
+	if DETERMINISTIC and out.is_cuda:
+		return out.index_put_((idx,), v, accumulate = True)
+	return out.index_add_(0, idx, v)
+
+def gather(x, idx):
+	"""x[idx] whose gradient is deterministic: on the GPU advanced indexing accumulates sorted indices, on the CPU
+	index_select accumulates with index_add_ (sequential)"""
+	return x[idx] if x.is_cuda else x.index_select(0, idx)
 
 def chunks(R, M, B, channels, elem):
 	"""rows of the [R, M] tables per chunk so that M * B * channels values per row fit in TEMP_BYTES"""
@@ -49,7 +75,7 @@ class SparseConvFn(t.autograd.Function):
 		for a in range(0, R, step):
 			it = inTab[a:a + step]
 			y = t.bmm(x[it.reshape(-1)].reshape(len(it), M * B, cin), weight[offs[a:a + step]])
-			out.index_add_(0, outTab[a:a + step].reshape(-1), y.reshape(len(it) * M, B, cout).to(dt))
+			addRows(out, outTab[a:a + step], y.reshape(len(it) * M, B, cout).to(dt))
 		out = out[:nOut]
 		if centre >= 0:
 			out += x @ weight[centre]
@@ -78,7 +104,7 @@ class SparseConvFn(t.autograd.Function):
 				ot = t.nn.functional.pad(ot, (0, Mp - M), value = go.shape[0])
 			gg = gp[ot.reshape(-1)].reshape(r, Mp * B, cout)
 			if gx is not None:
-				gx.index_add_(0, it.reshape(-1), t.bmm(gg, weight[offs[a:a + step]].transpose(1, 2)).reshape(r * Mp, B, cin).to(x.dtype))
+				addRows(gx, it, t.bmm(gg, weight[offs[a:a + step]].transpose(1, 2)).reshape(r * Mp, B, cin).to(x.dtype))
 			if gw is not None:
 				g = x[it.reshape(-1)].reshape(r * S, (Mp // S) * B, cin)
 				gw[a:a + step] = t.bmm(g.transpose(1, 2), gg.reshape(r * S, (Mp // S) * B, cout)).reshape(r, S, cin, cout).sum(1).to(weight.dtype)

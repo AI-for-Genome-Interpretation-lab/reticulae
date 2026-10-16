@@ -1,0 +1,49 @@
+config	D	active_per_sample	batch	nnz	deterministic	fwd_bwd_ms	bitwise_repeatable
+1D regular k9 s4	1	1000	8	738	False	1.213	False
+1D regular k9 s4	1	1000	8	738	True	1.330	True
+1D submanifold k5	1	1000	8	738	False	1.323	False
+1D submanifold k5	1	1000	8	738	True	1.823	True
+2D regular 3x3 s2	2	1000	8	4008	False	2.019	False
+2D regular 3x3 s2	2	1000	8	4008	True	2.289	True
+2D submanifold 3x3	2	1000	8	4008	False	2.008	False
+2D submanifold 3x3	2	1000	8	4008	True	2.841	True
+3D regular 3x3x3 s2	3	1000	4	3396	False	2.991	False
+3D regular 3x3x3 s2	3	1000	4	3396	True	3.737	True
+3D submanifold 3x3x3	3	1000	4	3396	False	2.661	False
+3D submanifold 3x3x3	3	1000	4	3396	True	3.376	True
+1D regular k9 s4	1	10000	8	7272	False	1.551	True
+1D regular k9 s4	1	10000	8	7272	True	1.946	True
+1D submanifold k5	1	10000	8	7272	False	2.050	False
+1D submanifold k5	1	10000	8	7272	True	2.216	True
+2D regular 3x3 s2	2	10000	8	39646	False	2.126	False
+2D regular 3x3 s2	2	10000	8	39646	True	2.359	True
+2D submanifold 3x3	2	10000	8	39646	False	2.064	False
+2D submanifold 3x3	2	10000	8	39646	True	2.608	True
+3D regular 3x3x3 s2	3	10000	4	33350	False	2.291	False
+3D regular 3x3x3 s2	3	10000	4	33350	True	2.921	True
+3D submanifold 3x3x3	3	10000	4	33350	False	2.157	False
+3D submanifold 3x3x3	3	10000	4	33350	True	3.508	True
+1D regular k9 s4	1	100000	8	73531	False	1.873	True
+1D regular k9 s4	1	100000	8	73531	True	2.129	True
+1D submanifold k5	1	100000	8	73531	False	2.197	True
+1D submanifold k5	1	100000	8	73531	True	2.238	True
+2D regular 3x3 s2	2	100000	8	394553	False	6.317	True
+2D regular 3x3 s2	2	100000	8	394553	True	6.346	True
+2D submanifold 3x3	2	100000	8	394553	False	10.998	True
+2D submanifold 3x3	2	100000	8	394553	True	11.011	True
+3D regular 3x3x3 s2	3	100000	4	333706	False	8.227	False
+3D regular 3x3x3 s2	3	100000	4	333706	True	8.374	True
+3D submanifold 3x3x3	3	100000	4	333706	False	12.757	False
+3D submanifold 3x3x3	3	100000	4	333706	True	12.950	True
+1D regular k9 s4	1	500000	8	367919	False	4.029	True
+1D regular k9 s4	1	500000	8	367919	True	4.088	True
+1D submanifold k5	1	500000	8	367919	False	8.000	True
+1D submanifold k5	1	500000	8	367919	True	8.000	True
+2D regular 3x3 s2	2	500000	8	1967134	False	36.877	True
+2D regular 3x3 s2	2	500000	8	1967134	True	36.906	True
+2D submanifold 3x3	2	500000	8	1967134	False	65.212	True
+2D submanifold 3x3	2	500000	8	1967134	True	65.274	True
+3D regular 3x3x3 s2	3	500000	4	1669833	False	48.634	True
+3D regular 3x3x3 s2	3	500000	4	1669833	True	48.994	True
+3D submanifold 3x3x3	3	500000	4	1669833	False	72.300	True
+3D submanifold 3x3x3	3	500000	4	1669833	True	72.404	True

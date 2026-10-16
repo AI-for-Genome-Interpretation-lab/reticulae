@@ -28,6 +28,7 @@ an extra reference.
 - [Quick start](#quick-start)
 - [Compact storage of genomic data: SparseImages](#compact-storage-of-genomic-data-sparseimages)
 - [How it works without a special library](#how-it-works-without-a-special-library)
+- [Reproducibility on the GPU](#reproducibility-on-the-gpu)
 - [Correctness](#correctness)
 - [Benchmarks against spconv](#benchmarks-against-spconv)
 - [Differences from spconv](#differences-from-spconv)
@@ -192,7 +193,9 @@ reticulae avoids these costs within PyTorch:
   on the batch. It is computed once, and the batch becomes a dense dimension of every matmul. Features are site-major,
   `[sites, batch, C]`, so gathering a site copies one contiguous row.
 - **One gather, one `bmm`, one scatter per layer, whatever the kernel size.** The pairs are grouped by offset and each
-  group is padded to the largest, giving `[R, M]` index tables (2–21% padding on genotyping panels).
+  group is padded to the largest, giving `[R, M]` index tables (2–21% padding on genotyping panels). By default the
+  scatter is issued one offset at a time, so that results are reproducible
+  ([Reproducibility on the GPU](#reproducibility-on-the-gpu)).
 - **Submanifold centre offset as a plain matmul.** Every site maps to itself through the centre offset, so its group
   is much larger than the others; computed apart, it no longer dominates the padding (4× waste in 3D otherwise).
 - **Rulebooks by sorting instead of hash tables.**
@@ -204,6 +207,39 @@ reticulae avoids these costs within PyTorch:
   long reductions into tiny cin × cout outputs, which would leave the GPU idle) is split into chunks. When the gathered
   rows exceed a memory budget, the offsets are processed in chunks.
 
+## Reproducibility on the GPU
+
+> [!IMPORTANT]
+> **By default (`reticulae.Convolutions.DETERMINISTIC = True`) every layer gives bitwise-identical results when it is
+> run twice on the same input with the same weights, on the GPU as on the CPU, so that a training run with a fixed
+> seed can be repeated exactly.** Set `reticulae.Convolutions.DETERMINISTIC = False` for at most a few percent more
+> speed on large layers, at the price of results that change slightly from run to run.
+>
+> **The issue.** The last step of a sparse convolution adds the products of every kernel offset into the output sites
+> (scatter-add, `index_add_`). Floating-point addition is not associative: (a + b) + c can differ from a + (b + c) in
+> the last bit. On the GPU, `index_add_` adds with atomic operations, and when several inputs reach the same output
+> site, the order of their additions depends on the scheduling of the GPU threads, which changes from run to run.
+> If all the offsets are scattered in a single call, every output site with more than one active input in its
+> receptive field is such a collision. The differences are of the order of 1e-7, but training amplifies them: two
+> runs of the same network, seed and data end at different weights. On a genotyping panel (7,314 loci, the 9 layers of
+> `SparseHilbertCNN`, early stopping and 4 hyperparameter configurations), two runs gave test correlations of 0.236 and 0.242, and their inner-validation
+> scores, which decide early stopping and the hyperparameters, differed by up to 0.04.
+>
+> **The fix.** Within one kernel offset, an output site receives at most one input (for a fixed offset δ, the map
+> input → output is one-to-one). With `DETERMINISTIC = True` the scatter-add is issued one offset (one row of the
+> rulebook table) at a time: no two atomic additions of a call hit the same site, and the offsets are added in a fixed
+> order. Pooling, `globalPool` and the input of `SparseHilbertCNN`, whose collisions are not organised by offset, use
+> `index_put_(accumulate = True)`, which sorts the indices before adding. No global PyTorch setting is needed
+> (`torch.use_deterministic_algorithms(True)` has the same effect, but it is global and was 1.4× slower on the
+> genotyping panel).
+>
+> **The cost** is one kernel launch per offset instead of one per chunk. Measured on an NVIDIA L40S
+> (`benchmarks/benchDeterminism.py`, `benchmarks/results/determinism.tsv`, the 24 layers of the benchmark below):
+> 1.00–1.14× the time of the atomic version from 10^5 active sites per sample, up to 1.6× on tiny layers of 2–3 ms
+> (at most +1.4 ms). The atomic version gave bitwise-repeatable gradients in only 11 of the 24 layers, the
+> deterministic one in all 24. The Hilbert network on the genotyping panel above takes 37.8 ms per forward + backward
+> pass (batch 32), against 37.2 ms with atomics. The spconv comparison below was measured with atomics.
+
 ## Correctness
 
 ```bash
@@ -211,7 +247,7 @@ python -m pytest -q tests                  # CPU
 DEVICE=cuda:0 python -m pytest -q tests    # GPU (+ the spconv cross-checks if spconv is installed)
 ```
 
-252 tests. On CPU, 239 pass and 13 GPU-only tests are skipped. On an NVIDIA L40S, 240 pass; the 12 spconv cross-checks
+253 tests. On CPU, 240 pass and 13 GPU-only tests are skipped. On an NVIDIA L40S, 241 pass; the 12 spconv cross-checks
 are skipped when spconv is not installed (they passed with spconv-cu126 2.3.8). Each operation is compared with an
 independent reference:
 
@@ -227,6 +263,7 @@ independent reference:
 | gradients | `gradcheck`, `gradgradcheck`; input, weight and bias gradients of every operation against the dense one; chunked paths |
 | fixed-sites layers | the per-sample layers with every sample having the same sites |
 | Hilbert network | a dense masked re-implementation, and a per-offset loop implementation (predictions and every gradient equal to 1e-9) |
+| determinism | every layer (fixed sites and per-sample, convolutions, pooling, `globalPool`, the Hilbert network with loci sharing a pixel) run twice on a fully active grid: bitwise-identical outputs and gradients (this test fails on the GPU with `DETERMINISTIC = False`) |
 | storage | exact round trips of `PackedArray` (1/2/4 bits, signed/unsigned, floats, constants) and `SparseImages` (batches, save/load); smallest dtypes; byte counts |
 | spconv (if installed) | `SparseConvNd`, `SubMConvNd` (incl. dilation), `SparseConvTransposeNd`, `SparseInverseConvNd`, `SparseMaxPoolNd`: same sites, values within 1e-4 (observed ≤ 3e-6) |
 
@@ -236,7 +273,8 @@ sites, wrong chunk reduction, centre offset dropped, wrong cache key, …) are e
 
 ## Benchmarks against spconv
 
-NVIDIA L40S, PyTorch 2.11, spconv-cu126 2.3.8, float32, median of 10–20 repetitions after warm-up. All data are
+NVIDIA L40S, PyTorch 2.11, spconv-cu126 2.3.8, float32, median of 10–20 repetitions after warm-up, measured with
+`DETERMINISTIC = False` (see [Reproducibility on the GPU](#reproducibility-on-the-gpu) for the cost of the default). All data are
 synthetic. The outputs of the two libraries are compared in every configuration (column `max_abs_diff` of
 `benchmarks/results/*.tsv`). To reproduce (spconv needed):
 

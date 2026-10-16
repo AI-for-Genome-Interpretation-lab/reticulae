@@ -328,3 +328,51 @@ def test_new_ops_vs_spconv(D):
 	for a, b in ((down, spd), (up, spu)):
 		b.weight.data.copy_(spWeight(a.weight.data, a.k)); b.bias.data.copy_(a.bias.data)
 	compareSp(up(down(x)), spu(spd(toSp(x))))
+
+# ---------------------------------------------------------------- determinism
+
+def twice(run):
+	"""run() -> list of tensors, twice with the same seed: bitwise equal"""
+	res = []
+	for rep in range(2):
+		t.manual_seed(1)
+		res.append([a.detach().clone() for a in run()])
+	return all(t.equal(a, b) for a, b in zip(*res))
+
+def test_deterministic():
+	"""DETERMINISTIC (default): two identical forward + backward passes give bitwise-identical outputs and gradients for
+	every layer, on a fully active grid with a batch large enough for colliding additions (on the GPU, the atomic
+	scatter-add of DETERMINISTIC = False typically fails this test)"""
+	assert R.Convolutions.DETERMINISTIC
+	S, B, C = 64, 16, 8
+	coords = np.stack(np.meshgrid(np.arange(S), np.arange(S), indexing = "ij"), -1).reshape(-1, 2)
+	t.manual_seed(0)
+	xf = t.randn(len(coords), B, C, device = DEVICE)
+	xs = tensorFrom(coords, (S, S), B, C); xs.features = xs.features.float()
+	fixed = [lambda: R.FixedSparseConv(coords, (S, S), C, C, 3, 2), lambda: R.FixedSubMConv(coords, (S, S), C, C, 3),
+		lambda: R.FixedSparseConvTranspose(coords, (S, S), C, C, 3, 2), lambda: R.FixedSparsePool(coords, (S, S), 3, 2, mode = "avg"),
+		lambda: R.FixedSparsePool(coords, (S, S), 3, 2, mode = "max")]
+	tensor = [lambda: R.SparseConv2d(C, C, 3, 2), lambda: R.SubMConv2d(C, C, 3), lambda: R.SparseConvTranspose2d(C, C, 3, 2),
+		lambda: R.SparseAvgPool2d(3, 2), lambda: R.SparseMaxPool2d(3, 2),
+		lambda: t.nn.Sequential(R.SparseConv2d(C, C, 3, 2, key = "d"), R.SparseInverseConv2d(C, C, 3, "d"))]
+	def run(make, x0, sparse, pool = None):
+		layer = make().to(DEVICE)
+		x = x0.clone().requires_grad_()
+		y = layer(xs.replace(x)) if sparse else layer(x)
+		y = pool(y) if pool else (y.features if sparse else y)
+		y.backward(t.cos(y.detach()))
+		return [y, x.grad] + [p.grad for p in layer.parameters()]
+	for make in fixed:
+		assert twice(lambda: run(make, xf, False))
+	for make in tensor:
+		assert twice(lambda: run(make, xs.features, True))
+	for mode in ("sum", "mean"):
+		assert twice(lambda: run(lambda: R.SubMConv2d(C, C, 3), xs.features, True, lambda h: R.globalPool(h, mode)))
+	xy, order = R.hilbertXY(["1"] * 400, np.repeat(np.arange(1, 201) * 1000, 2))   # pairs of loci sharing a pixel
+	g = t.randint(0, 3, (B, 400), dtype = t.int8)
+	def hc():
+		net = R.SparseHilbertCNN(400, 2, xy, order).to(DEVICE); net.prepare(g.numpy())
+		out = net(g.to(DEVICE))["pred"]
+		out.pow(2).sum().backward()
+		return [out] + [p.grad for p in net.parameters()]
+	assert twice(hc)

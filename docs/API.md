@@ -52,6 +52,7 @@ with the same meaning as in `torch.nn.ConvNd`.
 **Devices, dtypes, gradients.** Every layer works on CPU and GPU, in any float dtype, with autograd, and under
 `torch.autocast` (the matmuls run in the autocast dtype; gradients keep the parameter dtypes). Coordinates are int64,
 and any grid with batch × prod(spatialShape) < 2^62 is supported.
+By default the results are bitwise reproducible from run to run, also on the GPU (`DETERMINISTIC`, [section 8](#8-low-level-functions)).
 
 ## 2. SparseTensor
 
@@ -221,6 +222,7 @@ net.prepare(X.numpy()); net(X)["pred"].shape  # [4, 2]
 |---|---|
 | `R.SparseConvFn.apply(x, weight, inTab, outTab, offs, nOut, centre=-1)` | the autograd kernel: `x [N, B, cin]` → `[nOut, B, cout]` from padded rulebook tables |
 | `reticulae.Rulebook.regular / transposed / submanifold / tables` | rulebook builders (torch, on the device of the indices) |
+| `reticulae.Convolutions.DETERMINISTIC` | `True` (default): bitwise-reproducible results on the GPU; the scatter-add of every layer is issued one kernel offset at a time, and pooling sorts its indices. `False`: one atomic scatter-add per chunk, slightly faster, results vary in the last bits from run to run. Set it before the forward pass: `reticulae.Convolutions.DETERMINISTIC = False`. See the README, [Reproducibility on the GPU](../README.md#reproducibility-on-the-gpu) |
 | `reticulae.Convolutions.TEMP_BYTES` | budget for the temporary gathered rows of a layer (default 2^28 bytes). Beyond it the kernel offsets are processed in chunks: less memory, slightly more time |
 
 ## 9. Not implemented

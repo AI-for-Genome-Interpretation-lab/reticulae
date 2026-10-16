@@ -14,7 +14,7 @@ tests/referenceHilbertCNN.py, on site-major features (see Convolutions.py).
 import numpy as np
 import torch as t
 import torch.nn as nn
-from reticulae.Convolutions import FixedSparseConv
+from reticulae.Convolutions import FixedSparseConv, scatterAdd
 
 def d2xy(order, d):
 	"""Hilbert curve index -> (x, y), vectorised (classic iterative algorithm)"""
@@ -123,7 +123,7 @@ class SparseHilbertCNN(nn.Module):
 		g = x.float()
 		g = t.where(x == -127, self.mean.expand_as(g), g)
 		g = self.inp(g)
-		f = g.new_zeros((self.nSites, g.shape[0])).index_add_(0, self.site, g.t()) / self.count[:, None]
+		f = scatterAdd(g.new_zeros((self.nSites, g.shape[0])), self.site, g.t()) / self.count[:, None]
 		return f.unsqueeze(2)
 
 	def forward(self, x, idx = None):

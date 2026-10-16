@@ -5,15 +5,20 @@ import numpy as np
 import torch as t
 import torch.nn as nn
 from reticulae import Rulebook as RB
-from reticulae.Convolutions import SparseTensor
+from reticulae.Convolutions import SparseTensor, addRows, scatterAdd, gather
 
-def pool(x, ins, outs, nOut, mode):
-	"""x [N, B, C], pairs (ins -> outs) -> [nOut, B, C]: max or mean over the inputs of every output"""
-	y = x[ins]
+def pool(x, ins, outs, off, K, nOut, mode):
+	"""x [N, B, C], pairs (ins -> outs) sorted by kernel offset off -> [nOut, B, C]: max or mean over the inputs of every
+	output (the mean sums one offset at a time, as the convolutions: Convolutions.addRows)"""
 	if mode == "max":
-		return x.new_empty((nOut,) + x.shape[1:]).scatter_reduce_(0, outs[:, None, None].expand_as(y), y, "amax", include_self = False)
+		y = gather(x, ins)
+		# initialised to -inf, not left empty: the gradient of scatter_reduce compares the initial values with the result
+		return x.new_full((nOut,) + x.shape[1:], -float("inf")).scatter_reduce_(0, outs[:, None, None].expand_as(y), y, "amax", include_self = False)
+	inTab, outTab, _ = RB.tables(ins, outs, off, K, nOut)
+	out = x.new_zeros((nOut + 1,) + x.shape[1:])
+	addRows(out, outTab, gather(x, inTab.reshape(-1)))
 	cnt = t.bincount(outs, minlength = nOut).to(x.dtype)
-	return x.new_zeros((nOut,) + x.shape[1:]).index_add_(0, outs, y) / cnt[:, None, None]
+	return out[:nOut] / cnt[:, None, None]
 
 class SparsePool(nn.Module):
 	"""mode 'max' or 'avg' over the active inputs of every window (SparseTensor in, SparseTensor out)"""
@@ -24,7 +29,7 @@ class SparsePool(nn.Module):
 
 	def forward(self, x):
 		outIdx, outShape, ins, outs, off = RB.regular(x.indices, x.spatialShape, x.batchSize, self.k, self.s, self.p, self.d)
-		f = pool(x.features[:, None], ins, outs, len(outIdx), self.mode)[:, 0]
+		f = pool(x.features[:, None], ins, outs, off, len(RB.kernelOffsets(self.k, "cpu")), len(outIdx), self.mode)[:, 0]
 		return SparseTensor(f, outIdx, outShape, x.batchSize, history = x.history)
 
 	def extra_repr(self):
@@ -61,9 +66,11 @@ class FixedSparsePool(nn.Module):
 		self.outCoords, self.nOut = outIdx[:, 1:].numpy(), len(outIdx)
 		self.register_buffer("ins", ins, persistent = False)
 		self.register_buffer("outs", outs, persistent = False)
+		self.register_buffer("off", off, persistent = False)
+		self.K = len(RB.kernelOffsets(RB.tup(k, D), "cpu"))
 
 	def forward(self, x):
-		return pool(x, self.ins, self.outs, self.nOut, self.mode)
+		return pool(x, self.ins, self.outs, self.off, self.K, self.nOut, self.mode)
 
 def globalPool(x, mode = "max"):
 	"""SparseTensor -> [B, C]: max, mean or sum of the features of every sample over its active sites (0 for a
@@ -73,7 +80,7 @@ def globalPool(x, mode = "max"):
 	if mode == "max":
 		out = x.features.new_zeros((B, C)).scatter_reduce_(0, b[:, None].expand(-1, C), x.features, "amax", include_self = False)
 		return out
-	out = x.features.new_zeros((B, C)).index_add_(0, b, x.features)
+	out = scatterAdd(x.features.new_zeros((B, C)), b, x.features)
 	if mode == "mean":
 		out = out / t.bincount(b, minlength = B).clamp(min = 1).to(out.dtype)[:, None]
 	return out
