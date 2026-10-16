@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reticulae"
+version = "0.1.0"
+description = "Sparse convolutions (regular and submanifold, 1D/2D/3D) in pure PyTorch"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "GPL-3.0-or-later"}
+dependencies = ["torch>=2.1", "numpy"]
+
+[tool.setuptools]
+packages = ["reticulae"]
