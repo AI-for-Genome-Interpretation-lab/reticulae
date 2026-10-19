@@ -1,6 +1,11 @@
-# reticulae
+<table>
+  <tr>
+    <td><img src="retiLogo.png" alt="reticulae logo" width="120"></td>
+    <td><h1>reticulae: Spatially Sparse Convolution NN in pure pytorch</h1></td>
+  </tr>
+</table>
 
-Sparse convolutional networks in **pure PyTorch**: no CUDA extension, no compilation, no dependency besides `torch` and
+Sparse convolutional neural networks in **pure PyTorch**: no CUDA extension, no compilation, no dependency besides `torch` and
 `numpy`. It runs wherever PyTorch runs (CPU or GPU), with autograd and `torch.autocast`, on grids of any size up to
 batch × volume < 2^62.
 
