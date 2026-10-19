@@ -1,6 +1,6 @@
 <table>
   <tr>
-    <td><img src="retiLogo.png" alt="reticulae logo" width="120"></td>
+    <td><img src="retiLogo.png" alt="reticulae logo" width="250"></td>
     <td><h1>reticulae: Spatially Sparse Convolution NN in pure pytorch</h1></td>
   </tr>
 </table>
@@ -10,12 +10,12 @@ Sparse convolutional neural networks in **pure PyTorch**: no CUDA extension, no 
 batch × volume < 2^62.
 
 What it implements, in 1D, 2D and 3D (or any D):
-- regular, submanifold, transposed and inverse sparse convolutions, all with stride, padding and dilation;
-- max, average and global pooling;
+- **regular, submanifold, transposed and inverse sparse convolutions**, all with stride, padding and dilation;
+- **max, average and global pooling**;
 - layers specialised for batches whose samples share the same active sites (fastest for genotyping panels);
 - compact storage of sparse images: coordinates in the smallest unsigned type, values bit-packed (e.g. 2 bits per
-  dosage);
-- genome images on a Hilbert curve, with the HC network of SchizophreniaGI.
+  genetic mutations dosage);
+- genome images on a Hilbert curve, with the HC network used in https://link.springer.com/article/10.1186/s13059-025-03692-6 and https://www.nature.com/articles/s41467-026-76663-5.
 
 Every operation equals the corresponding dense PyTorch operation on the zero-filled image
 ([Correctness](#correctness)), and matched [spconv](https://github.com/traveller59/spconv) to 3e-6, which was used as
